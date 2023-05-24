@@ -1,0 +1,177 @@
+---
+title: "MRP for NYC Community Health Survey"
+author: "Gio Circo"
+date: "2023-05-24"
+output: html_document
+---
+
+```{r, echo=FALSE}
+ky = 'edec223a23e42657e81774cd13394d10625a3961'
+```
+
+## MRP Example Code
+
+Pull data from the **[NYC Community Health Survey](https://www.nyc.gov/site/doh/data/data-sets/community-health-survey-public-use-data.page).** Code takes about 15-20 minutes to run end-to-end (pulling data from PUMS is very, very slow).
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+library(tidyverse)
+library(tidycensus)
+library(brms)
+library(sf)
+
+# load survey data
+df <-
+  haven::read_sas("https://www.nyc.gov/assets/doh/downloads/sas/episrv/chs2019_public.sas7bdat")
+
+# load puma shapefile of NYC
+# plot map
+nyc_geo <- st_read("geo_export_a92160ac-6718-4bd7-85a8-dac03d8ee421.shp")
+
+# load Public-Use Micro Data
+# ky = '<API KEY>'
+puma = get_pums(
+  state = 'NY',
+  variables = c("PUMA", "AGEP", "SEX", "RAC1P", "FHISP", "SCHL"),
+  rep_weights = "person",
+  key = ky
+) %>%
+  mutate(SCHL = as.numeric(SCHL))
+```
+
+## Data Setup
+
+### Recode PUMA data into strata
+
+```{r, warning=FALSE, message=FALSE}
+# Recode PUMA variables to match survey strata
+nyc_puma <-
+  puma %>%
+  mutate(
+    age = case_when(
+      between(AGEP, 18, 24) ~ "18-24",
+      between(AGEP, 25, 44) ~ "25-44",
+      between(AGEP, 45, 64) ~ "45-64",
+      AGEP >= 65 ~ "65+"
+    ),
+    sex = ifelse(SEX == 1, "male", "female"),
+    race = case_when(
+      RAC1P == 1 & FHISP == 0 ~ "white",
+      RAC1P == 2 ~ "black",
+      FHISP == 1 ~ "hispanic",
+      FHISP == 6 ~ "asian",
+      TRUE ~ "other"
+    ),
+    edu = case_when(
+      SCHL %in% 1:15 ~ "less_hs",
+      SCHL %in% 16:17 ~ "hs",
+      SCHL %in% 18:20 ~ "some_college",
+      SCHL %in% 20:24 ~ "college"
+    )
+  ) %>%
+  count(PUMA, age, sex, race, edu, wt = PWGTP) %>%
+  na.omit()
+
+```
+
+### Recode survey data
+
+```{r}
+# construct the survey
+svy_df <- df %>%
+  mutate(
+    age = case_when(
+      agegroup == 1 ~ "18-24",
+      agegroup == 2 ~ "25-44",
+      agegroup == 3 ~ "45-64",
+      agegroup == 4 ~ "65+"
+    ),
+    sex = case_when(birthsex == 1 ~ "male",
+                    birthsex == 2 ~ "female"),
+    race = case_when(
+      newrace == 1 ~ "white",
+      newrace == 2 ~ "black",
+      newrace == 3 ~ "hispanic",
+      newrace == 4 ~ "asian",
+      TRUE ~ "other"
+    ),
+    edu = case_when(
+      education == 1 ~ "less_hs",
+      education == 2 ~ "hs",
+      education == 3 ~ "some_college",
+      education == 4 ~ "college"
+    ),
+    health_good = case_when(generalhealth %in% 1:3 ~ 1,
+                            TRUE ~ 0)
+  ) %>%
+  select(age, sex, race, edu, health_good) %>%
+  na.omit()
+
+# post strat table
+# 160 = 4*2*5*4
+post_strat <-
+  svy_df %>%
+  expand(age, sex, race, edu)
+```
+
+## Run HLM
+
+```{r, warning=FALSE}
+# Regression Step
+# Multi-level regression predicting the probability a respondent
+# says their health is "excellent", "very good" or "good"
+
+bprior <- c(prior(normal(0, 2), class = "Intercept"),
+            prior(normal(0, 2), class = "sd"))
+
+# simple random intercepts model, no interactions
+# although we would likely want to do sex*race, and age*sex
+fit1 <- brm(
+  health_good ~ 1 +
+    (1 | age) +
+    (1 | sex) +
+    (1 | race) +
+    (1 | edu),
+  family = bernoulli(),
+  data = svy_df,
+  chains = 4,
+  cores = 4,
+  iter = 2000,
+  control = list(adapt_delta = .95)
+)
+
+summary(fit1)
+```
+
+```{r}
+# get predictions
+# draw from posterior, compute means
+pp <- posterior_predict(fit1, post_strat)
+pred_df <- tibble(post_strat, pred = apply(pp, 2, mean))
+
+head(pred_df)
+```
+
+## Post Strat Estimates
+
+```{r}
+# post stratify  
+mrp <-
+  nyc_puma %>%
+  mutate(PUMA = substr(PUMA, 2, 5)) %>%
+  filter(PUMA %in% nyc_geo$puma) %>%
+  left_join(pred_df) %>%
+  mutate(mrp_est = n * pred) %>%
+  group_by(PUMA) %>%
+  summarise(prop = sum(mrp_est) / sum(n))
+
+# plot
+nyc_geo %>%
+  left_join(mrp, by = c("puma" = "PUMA")) %>%
+  ggplot() +
+  geom_sf(aes(fill = prop)) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "NYC Community Health Survey (2019)",
+       subtitle = "Proportion stating health is 'Excellent', 'Very Good', or 'Good'",
+       fill = "MRP Est")
+```
