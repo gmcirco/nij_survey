@@ -2,9 +2,7 @@
 title: "MRP for NYC Community Health Survey"
 author: "Gio Circo"
 date: "2023-05-24"
-output:
-  pdf_document: default
-  html_document: default
+format: gfm
 ---
 
 ```{r, echo=FALSE}
