@@ -1,17 +1,3 @@
----
-title: "MRP for Raleigh Community Survey 2018"
-author: "Gio Circo"
-date: "2023-06-12"
-format: gfm
----
-
-## MRP Example Code
-
-First, need to pull census data from ACS, link responses to census tract level.
-NOTE: Can likely do even block group but not sure on how many strata we can do.
-Will also have to rely somewhat on spatial weighting as well (see ICAR models).
-
-```{r, warning=FALSE, message=FALSE, results='hide'}
 library(tidyverse)
 library(brms)
 library(tidycensus)
@@ -61,13 +47,11 @@ svy_coords <- svy %>%
   st_join(raleigh_tract) %>%
   tibble() %>%
   select(ID, geoid)
-```
 
-## Data Setup
 
-### Recode census data
+# MODEL DATA
+# ------------------------- #
 
-```{r, warning=FALSE, message=FALSE}
 # Select variables of interest, grouping up by relevant strata
 # gender = 2, race = 4, age = 6
 census_demos <- census %>%
@@ -101,11 +85,6 @@ raleigh <-
   right_join(raleigh_tract) %>%
   st_as_sf()
 
-```
-
-### Recode survey data
-
-```{r}
 # mrp svy
 # this looks insane, but its just because the field names are wrong
 mrp_svy <- svy %>%
@@ -133,32 +112,18 @@ mrp_svy <- svy %>%
   )) %>%
   select(age,race,sex,geoid, pol_qual) %>% 
   na.omit()
-```
 
-### Strata to post-stratify to
-
-```{r}
 # post strat table
 post_strat <-
   mrp_svy %>%
   expand(age,race,sex,geoid)
 
-head(post_strat)
-```
-
-### Run MRP model
-
-```{r}
 # MULTI-LEVEL REGRESSION
 # ------------------------- #
 
 # set tight priors for more regularization
 bprior <- c(prior(normal(0, 1), class = "Intercept"),
             prior(normal(0, 1), class = "sd"))
-
-# Regression Step
-# Multi-level regression predicting the probability a respondent
-# says police service is "excellent" or "good"
 
 fit1 <- brm(pol_qual ~ sex +
               (1|age) +
@@ -175,16 +140,13 @@ fit1 <- brm(pol_qual ~ sex +
 
 summary(fit1)
 
-# extract point estimates 
+ 
 pp <- posterior_predict(fit1, post_strat)
 pred_df <- tibble(post_strat, pred = apply(pp, 2, mean))
-```
 
-## Post Stratified Estimates
-
-```{r}
 # POST STRATIFICATION
 # ------------------------- #
+
 post_strat_est <-
   pred_df %>%
   rename(gender = sex) %>%
@@ -211,5 +173,3 @@ post_strat_est %>%
   labs(title = "Raleigh Community Survey (2018)",
        subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
        fill = "MRP Est")
-
-```

@@ -1,139 +1,186 @@
-MRP for NYC Community Health Survey
-================
+# MRP for Raleigh Community Survey 2018
 Gio Circo
-5/24/23
+2023-06-12
 
 ## MRP Example Code
 
-Pull data from the **[NYC Community Health
-Survey](https://www.nyc.gov/site/doh/data/data-sets/community-health-survey-public-use-data.page).**
-Code takes about 15-20 minutes to run end-to-end (pulling data from PUMS
-is very, very slow).
+First, need to pull census data from ACS, link responses to census tract
+level. NOTE: Can likely do even block group but not sure on how many
+strata we can do. Will also have to rely somewhat on spatial weighting
+as well (see ICAR models).
 
 ``` r
 library(tidyverse)
-library(tidycensus)
 library(brms)
+library(tidycensus)
 library(sf)
 
 # load survey data
-df <-
-  haven::read_sas("https://www.nyc.gov/assets/doh/downloads/sas/episrv/chs2019_public.sas7bdat")
+svy <- read_csv("Ral18_Survey.csv")
 
-# load puma shapefile of NYC
-# plot map
-nyc_geo <- st_read("geo_export_a92160ac-6718-4bd7-85a8-dac03d8ee421.shp")
+# LOAD ACS DATA 
+# ------------------------- #
+vars <- filter(load_variables(2018, "acs5"), grepl("B01001", name))
+demo_vars <- vars %>% select(name) %>% pull()
 
-# load Public-Use Micro Data
-# ky = '<API KEY>'
-puma = get_pums(
-  state = 'NY',
-  variables = c("PUMA", "AGEP", "SEX", "RAC1P", "FHISP", "SCHL"),
-  rep_weights = "person",
-  key = ky
+census <- get_acs(
+  geography = "tract",
+  state = "NC",
+  county = "Wake",
+  variables = demo_vars
 ) %>%
-  mutate(SCHL = as.numeric(SCHL))
+  left_join(vars, by = c("variable" = "name"))
+
+# GEOGRAPHY
+# ------------------------- #
+
+# city limits of Raleigh
+city_limits <- st_read("Raleigh_City_Council_Districts.shp") %>%
+  st_transform(crs = 2264)
+
+# Wake County tracts
+raleigh_tract <-
+  get_acs(
+    geography = "tract",
+    state = "NC",
+    county = "Wake",
+    variables = "B01001_001",
+    geometry = TRUE
+  ) %>%
+  select(geoid = GEOID) %>%
+  st_transform(crs = st_crs(city_limits))
+
+# survey coords, spatial join to tract
+svy_coords <- svy %>%
+  select(ID, BLOCK_LAT, BLOCK_LON) %>%
+  filter(!is.na(BLOCK_LAT)) %>%
+  st_as_sf(coords = c('BLOCK_LON', 'BLOCK_LAT'), crs = 4326) %>%
+  st_transform(crs = st_crs(city_limits)) %>%
+  st_join(raleigh_tract) %>%
+  tibble() %>%
+  select(ID, geoid)
 ```
 
 ## Data Setup
 
-### Recode PUMA data into strata
+### Recode census data
 
 ``` r
-# Recode PUMA variables to match survey strata
-nyc_puma <-
-  puma %>%
+# Select variables of interest, grouping up by relevant strata
+# gender = 2, race = 4, age = 6
+census_demos <- census %>%
+  select(geoid = GEOID, estimate, label, concept) %>%
+  group_by(geoid, concept) %>%
+  slice(-1:-2) %>%
   mutate(
-    age = case_when(
-      between(AGEP, 18, 24) ~ "18-24",
-      between(AGEP, 25, 44) ~ "25-44",
-      between(AGEP, 45, 64) ~ "45-64",
-      AGEP >= 65 ~ "65+"
-    ),
-    sex = ifelse(SEX == 1, "male", "female"),
+    gender = case_when(grepl("Female", label) ~ "female",
+                       grepl("Male", label) ~ "male"),
     race = case_when(
-      RAC1P == 1 & FHISP == 0 ~ "white",
-      RAC1P == 2 ~ "black",
-      FHISP == 1 ~ "hispanic",
-      FHISP == 6 ~ "asian",
-      TRUE ~ "other"
+      grepl("WHITE ALONE, NOT HISPANIC OR LATINO", concept) ~ "white",
+      grepl("BLACK OR AFRICAN AMERICAN ALONE", concept) ~ "black",
+      grepl("HISPANIC OR LATINO", concept) ~ "hispanic",
+      grepl("NATIVE HAWAIIAN AND OTHER PACIFIC ISLANDER ALONE|ASIAN ALONE", concept) ~ "asian",
+      grepl("TWO OR MORE RACES|SOME OTHER RACE ALONE", concept) ~ "other"
     ),
-    edu = case_when(
-      SCHL %in% 1:15 ~ "less_hs",
-      SCHL %in% 16:17 ~ "hs",
-      SCHL %in% 18:20 ~ "some_college",
-      SCHL %in% 20:24 ~ "college"
+    age = case_when(
+      grepl("18 and 19|20 to 24|25 to 29|30 to 34", label) ~ "18-34",
+      grepl("35 to 44", label) ~ "35-44",
+      grepl("45 to 54", label) ~ "45-54",
+      grepl("55 to 64", label) ~ "55-64",
+      grepl("65 to 74|75 to 84|85 years and over", label) ~ "65+"
     )
   ) %>%
-  count(PUMA, age, sex, race, edu, wt = PWGTP) %>%
   na.omit()
+
+raleigh <-
+  census_demos %>%
+  group_by(geoid, gender, race, age) %>%
+  summarise(count = sum(estimate)) %>%
+  right_join(raleigh_tract) %>%
+  st_as_sf()
 ```
 
 ### Recode survey data
 
 ``` r
-# construct the survey
-svy_df <- df %>%
-  mutate(
-    age = case_when(
-      agegroup == 1 ~ "18-24",
-      agegroup == 2 ~ "25-44",
-      agegroup == 3 ~ "45-64",
-      agegroup == 4 ~ "65+"
-    ),
-    sex = case_when(birthsex == 1 ~ "male",
-                    birthsex == 2 ~ "female"),
-    race = case_when(
-      newrace == 1 ~ "white",
-      newrace == 2 ~ "black",
-      newrace == 3 ~ "hispanic",
-      newrace == 4 ~ "asian",
-      TRUE ~ "other"
-    ),
-    edu = case_when(
-      education == 1 ~ "less_hs",
-      education == 2 ~ "hs",
-      education == 3 ~ "some_college",
-      education == 4 ~ "college"
-    ),
-    health_good = case_when(generalhealth %in% 1:3 ~ 1,
-                            TRUE ~ 0)
-  ) %>%
-  select(age, sex, race, edu, health_good) %>%
+# mrp svy
+# this looks insane, but its just because the field names are wrong
+mrp_svy <- svy %>%
+  right_join(svy_coords) %>%
+  rename(age = `Which_of_the_following_best_describes_your_race_or_ethnicity___28_01`,
+         sex = `Household_Income__32`,
+         pol_qual = `Quality_of_police_services__12_01`) %>%
+  mutate(age = case_when(
+    age == 1 ~ "18-34",
+    age == 2 ~ "35-44",
+    age == 3 ~ "45-54",
+    age == 4 ~ "55-64",
+    age == 5 ~ "65+"
+  ),
+  race = case_when(
+    Ancestry__29 == 4 ~ "White",
+    Which_of_the_following_is_the_highest_level_of_education_you_have_completed___31 == 1 ~ "Hispanic",
+    !is.na(`Are_you_of_Spanish__Hispanic__or_Latino_Ancestry___29`) ~ "Black",
+    !is.na(`Other__Answer__28_02`) ~ "Asian",
+    TRUE ~ "Other"
+  ),
+  pol_qual = case_when(
+    pol_qual %in% 4:5 ~ 1,
+    pol_qual %in% 1:3 ~ 0
+  )) %>%
+  select(age,race,sex,geoid, pol_qual) %>% 
   na.omit()
-
-# post strat table
-# 160 = 4*2*5*4
-post_strat <-
-  svy_df %>%
-  expand(age, sex, race, edu)
 ```
 
-## Run HLM
+    Joining, by = "ID"
+
+### Strata to post-stratify to
 
 ``` r
+# post strat table
+post_strat <-
+  mrp_svy %>%
+  expand(age,race,sex,geoid)
+
+head(post_strat)
+```
+
+    # A tibble: 6 × 4
+      age   race  sex    geoid      
+      <chr> <chr> <chr>  <chr>      
+    1 18-34 Asian Female 37183050100
+    2 18-34 Asian Female 37183050300
+    3 18-34 Asian Female 37183050400
+    4 18-34 Asian Female 37183050500
+    5 18-34 Asian Female 37183050600
+    6 18-34 Asian Female 37183050700
+
+### Run MRP model
+
+``` r
+# MULTI-LEVEL REGRESSION
+# ------------------------- #
+
+# set tight priors for more regularization
+bprior <- c(prior(normal(0, 1), class = "Intercept"),
+            prior(normal(0, 1), class = "sd"))
+
 # Regression Step
 # Multi-level regression predicting the probability a respondent
-# says their health is "excellent", "very good" or "good"
+# says police service is "excellent" or "good"
 
-bprior <- c(prior(normal(0, 2), class = "Intercept"),
-            prior(normal(0, 2), class = "sd"))
-
-# simple random intercepts model, no interactions
-# although we would likely want to do sex*race, and age*sex
-fit1 <- brm(
-  health_good ~ 1 +
-    (1 | age) +
-    (1 | sex) +
-    (1 | race) +
-    (1 | edu),
-  family = bernoulli(),
-  data = svy_df,
-  chains = 4,
-  cores = 4,
-  iter = 2000,
-  control = list(adapt_delta = .95)
-)
+fit1 <- brm(pol_qual ~ sex +
+              (1|age) +
+              (1|race) +
+              (1|age:race) +
+              (1|geoid),
+            family = bernoulli(),
+            prior = bprior,
+            data = mrp_svy,
+            chains = 4,
+            cores = 4,
+            iter = 2000,
+            control = list(adapt_delta = .95))
 ```
 
     Compiling Stan program...
@@ -146,82 +193,92 @@ summary(fit1)
 
      Family: bernoulli 
       Links: mu = logit 
-    Formula: health_good ~ 1 + (1 | age) + (1 | sex) + (1 | race) + (1 | edu) 
-       Data: svy_df (Number of observations: 8722) 
+    Formula: pol_qual ~ sex + (1 | age) + (1 | race) + (1 | age:race) + (1 | geoid) 
+       Data: mrp_svy (Number of observations: 842) 
       Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1;
              total post-warmup draws = 4000
 
     Group-Level Effects: 
-    ~age (Number of levels: 4) 
+    ~age (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     1.38      0.76     0.55     3.38 1.00     1656     2283
+    sd(Intercept)     0.26      0.21     0.01     0.85 1.00     1475     1614
 
-    ~edu (Number of levels: 4) 
+    ~age:race (Number of levels: 25) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     1.06      0.61     0.41     2.69 1.00     1746     2207
+    sd(Intercept)     0.23      0.16     0.01     0.60 1.00     1237     1659
+
+    ~geoid (Number of levels: 107) 
+                  Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    sd(Intercept)     0.33      0.17     0.03     0.65 1.00      835     1289
 
     ~race (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.56      0.32     0.24     1.42 1.00     1283     2206
-
-    ~sex (Number of levels: 2) 
-                  Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.82      0.99     0.05     3.53 1.00     1199     1879
+    sd(Intercept)     0.68      0.30     0.26     1.43 1.00     1602     1434
 
     Population-Level Effects: 
               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    Intercept     0.99      1.13    -1.27     3.17 1.00     1724     1838
+    Intercept     0.80      0.39    -0.03     1.51 1.00     2015     2127
+    sexMale      -0.08      0.17    -0.43     0.26 1.00     5345     2999
 
     Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
     and Tail_ESS are effective sample size measures, and Rhat is the potential
     scale reduction factor on split chains (at convergence, Rhat = 1).
 
 ``` r
-# get predictions
-# draw from posterior, compute means
+# extract point estimates 
 pp <- posterior_predict(fit1, post_strat)
 pred_df <- tibble(post_strat, pred = apply(pp, 2, mean))
-
-head(pred_df)
 ```
 
-    # A tibble: 6 × 5
-      age   sex    race  edu           pred
-      <chr> <chr>  <chr> <chr>        <dbl>
-    1 18-24 female asian college      0.906
-    2 18-24 female asian hs           0.821
-    3 18-24 female asian less_hs      0.683
-    4 18-24 female asian some_college 0.845
-    5 18-24 female black college      0.962
-    6 18-24 female black hs           0.913
-
-## Post Strat Estimates
+## Post Stratified Estimates
 
 ``` r
-# post stratify  
-mrp <-
-  nyc_puma %>%
-  mutate(PUMA = substr(PUMA, 2, 5)) %>%
-  filter(PUMA %in% nyc_geo$puma) %>%
-  left_join(pred_df) %>%
-  mutate(mrp_est = n * pred) %>%
-  group_by(PUMA) %>%
-  summarise(prop = sum(mrp_est) / sum(n))
+# POST STRATIFICATION
+# ------------------------- #
+post_strat_est <-
+  pred_df %>%
+  rename(gender = sex) %>%
+  mutate(across(where(is.character), tolower)) %>%
+  left_join(raleigh) %>%
+  na.omit() %>%
+  mutate(pred = pred * count) %>%
+  group_by(geoid) %>%
+  summarise(count = sum(count),
+            pred = sum(pred)) %>%
+  mutate(prop = pred / count)
 ```
 
-    Joining, by = c("age", "sex", "race", "edu")
+    Joining, by = c("age", "race", "gender", "geoid")
 
 ``` r
-# plot
-nyc_geo %>%
-  left_join(mrp, by = c("puma" = "PUMA")) %>%
+# predictions
+head(post_strat_est)
+```
+
+    # A tibble: 6 × 4
+      geoid       count  pred  prop
+      <chr>       <dbl> <dbl> <dbl>
+    1 37183050100  5043 3761. 0.746
+    2 37183050300  3231 2549. 0.789
+    3 37183050400  1736 1354. 0.780
+    4 37183050500  3210 2296. 0.715
+    5 37183050600  3038 2004. 0.660
+    6 37183050700  2673 1761. 0.659
+
+``` r
+# Map of proportion
+post_strat_est %>%
+  left_join(raleigh_tract) %>%
+  st_as_sf() %>%
   ggplot() +
   geom_sf(aes(fill = prop)) +
   scale_fill_viridis_c() +
   theme_minimal() +
-  labs(title = "NYC Community Health Survey (2019)",
-       subtitle = "Proportion stating health is 'Excellent', 'Very Good', or 'Good'",
+  labs(title = "Raleigh Community Survey (2018)",
+       subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
        fill = "MRP Est")
 ```
 
-![](mrp_files/figure-commonmark/unnamed-chunk-7-1.png)
+    Joining, by = "geoid"
+
+![](mrp_files/figure-commonmark/unnamed-chunk-6-1.png)
