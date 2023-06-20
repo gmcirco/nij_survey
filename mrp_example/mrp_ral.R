@@ -152,7 +152,7 @@ fit1 <- brm(pol_qual ~ sex +
 
 summary(fit1)
 
-# CAR model
+# CAR model, via besag york mollie
 # see: https://mc-stan.org/users/documentation/case-studies/icar_stan.html
 # note: can't predict to regions with no observations
 fit2 <- brm(pol_qual ~ sex +

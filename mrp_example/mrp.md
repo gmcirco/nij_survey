@@ -212,24 +212,24 @@ summary(fit1)
     Group-Level Effects: 
     ~age (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.26      0.22     0.01     0.82 1.00     1402     1591
+    sd(Intercept)     0.27      0.22     0.01     0.81 1.00     1573     1733
 
     ~age:race (Number of levels: 25) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.21      0.15     0.01     0.58 1.00     1428     1866
+    sd(Intercept)     0.22      0.16     0.01     0.60 1.01     1271     1695
 
     ~geoid (Number of levels: 107) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.33      0.17     0.02     0.65 1.00      841     1110
+    sd(Intercept)     0.32      0.17     0.03     0.66 1.00     1068     1481
 
     ~race (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.68      0.30     0.26     1.42 1.00     1563     2322
+    sd(Intercept)     0.69      0.32     0.27     1.49 1.00     1946     2069
 
     Population-Level Effects: 
               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    Intercept     0.89      0.40     0.04     1.70 1.00     2000     2148
-    sexMale      -0.08      0.17    -0.41     0.25 1.00     4841     2862
+    Intercept     0.87      0.40     0.06     1.63 1.00     2138     2767
+    sexMale      -0.09      0.17    -0.43     0.25 1.00     6148     3196
 
     Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
     and Tail_ESS are effective sample size measures, and Rhat is the potential
@@ -271,36 +271,38 @@ summary(fit2)
 
     Correlation Structures:
            Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    rhocar     0.60      0.26     0.08     0.98 1.00     1489     1903
-    sdcar      0.36      0.16     0.05     0.67 1.01      855      734
+    rhocar     0.61      0.26     0.08     0.98 1.00     1395     1824
+    sdcar      0.36      0.16     0.05     0.67 1.00      997      758
 
     Group-Level Effects: 
     ~age (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.26      0.22     0.01     0.82 1.00     1201     1465
+    sd(Intercept)     0.27      0.23     0.01     0.87 1.00     1351     1801
 
     ~age:race (Number of levels: 25) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.23      0.17     0.01     0.63 1.00     1178     1756
+    sd(Intercept)     0.22      0.16     0.01     0.58 1.00     1309     1675
 
     ~geoid (Number of levels: 107) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.22      0.15     0.01     0.56 1.01      577     1395
+    sd(Intercept)     0.22      0.15     0.01     0.57 1.00      799     1801
 
     ~race (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.65      0.31     0.21     1.39 1.00     1500     1458
+    sd(Intercept)     0.65      0.30     0.24     1.40 1.00     1974     2368
 
     Population-Level Effects: 
               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    Intercept     0.98      0.40     0.16     1.79 1.00     1612     2124
-    sexMale      -0.09      0.17    -0.43     0.25 1.00     6210     3096
+    Intercept     0.98      0.38     0.20     1.70 1.00     1734     2537
+    sexMale      -0.09      0.17    -0.42     0.24 1.00     6194     2893
 
     Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
     and Tail_ESS are effective sample size measures, and Rhat is the potential
     scale reduction factor on split chains (at convergence, Rhat = 1).
 
 ## Post Stratified Estimates
+
+### MRP Estimates and MRP + CAR
 
 ``` r
 # POST STRATIFICATION
@@ -363,3 +365,32 @@ plot_df %>%
     Joining, by = "geoid"
 
 ![](mrp_files/figure-commonmark/unnamed-chunk-6-1.png)
+
+### Differences between MRP and MRP + CAR
+
+A strong NE-SW gradient is apparent here. This is due to the spatial
+weighting and likely accounts for some of the racial-based geographic
+segregation. However the differences are *very* minor - on the order of
+less than a percentage point.
+
+``` r
+# differences
+plot_df %>%
+  group_by(geoid) %>%
+  mutate(diff = prop - lag(prop) ) %>%
+  na.omit()%>%
+  left_join(raleigh_tract) %>%
+  st_as_sf() %>%
+  ggplot() +
+  geom_sf(aes(fill = diff), color = "grey50") +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  facet_wrap(~ model) +
+  labs(title = "Raleigh Community Survey (2018)",
+       subtitle = "Difference in proportion",
+       fill = "MRP Est")
+```
+
+    Joining, by = "geoid"
+
+![](mrp_files/figure-commonmark/unnamed-chunk-7-1.png)
