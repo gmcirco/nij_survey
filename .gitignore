@@ -1,3 +1,4 @@
 # ignoring stuff in the lit folder
 
 /lit/*
+.Rproj.user

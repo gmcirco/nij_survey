@@ -1,6 +1,6 @@
 # MRP for Raleigh Community Survey 2018
 Gio Circo
-2023-06-12
+2023-06-20
 
 ## MRP Example Code
 
@@ -14,6 +14,7 @@ library(tidyverse)
 library(brms)
 library(tidycensus)
 library(sf)
+library(spdep)
 
 # load survey data
 svy <- read_csv("Ral18_Survey.csv")
@@ -59,6 +60,11 @@ svy_coords <- svy %>%
   st_join(raleigh_tract) %>%
   tibble() %>%
   select(ID, geoid)
+
+# create adjacency matrix
+nb <- poly2nb(raleigh_tract)
+W <- nb2mat(nb, style = "B")
+row.names(W) <- raleigh_tract$geoid
 ```
 
 ## Data Setup
@@ -73,7 +79,7 @@ census_demos <- census %>%
   group_by(geoid, concept) %>%
   slice(-1:-2) %>%
   mutate(
-    gender = case_when(grepl("Female", label) ~ "female",
+    sex = case_when(grepl("Female", label) ~ "female",
                        grepl("Male", label) ~ "male"),
     race = case_when(
       grepl("WHITE ALONE, NOT HISPANIC OR LATINO", concept) ~ "white",
@@ -94,7 +100,7 @@ census_demos <- census %>%
 
 raleigh <-
   census_demos %>%
-  group_by(geoid, gender, race, age) %>%
+  group_by(geoid, sex, race, age) %>%
   summarise(count = sum(estimate)) %>%
   right_join(raleigh_tract) %>%
   st_as_sf()
@@ -103,6 +109,8 @@ raleigh <-
 ### Recode survey data
 
 ``` r
+# mrp svy
+# this looks insane, but its just because the field names are wrong
 # mrp svy
 # this looks insane, but its just because the field names are wrong
 mrp_svy <- svy %>%
@@ -155,20 +163,23 @@ head(post_strat)
     5 18-34 Asian Female 37183050600
     6 18-34 Asian Female 37183050700
 
-### Run MRP model
+### Run MRP models
 
 ``` r
 # MULTI-LEVEL REGRESSION
 # ------------------------- #
 
 # set tight priors for more regularization
-bprior <- c(prior(normal(0, 1), class = "Intercept"),
+bprior <- c(prior(normal(0, 2), class = "Intercept"),
+            prior(normal(0, 2), class = "b"),
             prior(normal(0, 1), class = "sd"))
 
-# Regression Step
-# Multi-level regression predicting the probability a respondent
-# says police service is "excellent" or "good"
+bprior2 <- c(prior(normal(0, 2), class = "Intercept"),
+             prior(normal(0, 2), class = "b"),
+             prior(normal(0, 1), class = "sdcar"),
+             prior(normal(0, 1), class = "sd"))
 
+# no spatial effects
 fit1 <- brm(pol_qual ~ sex +
               (1|age) +
               (1|race) +
@@ -201,79 +212,149 @@ summary(fit1)
     Group-Level Effects: 
     ~age (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.26      0.21     0.01     0.85 1.00     1475     1614
+    sd(Intercept)     0.26      0.22     0.01     0.82 1.00     1402     1591
 
     ~age:race (Number of levels: 25) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.23      0.16     0.01     0.60 1.00     1237     1659
+    sd(Intercept)     0.21      0.15     0.01     0.58 1.00     1428     1866
 
     ~geoid (Number of levels: 107) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.33      0.17     0.03     0.65 1.00      835     1289
+    sd(Intercept)     0.33      0.17     0.02     0.65 1.00      841     1110
 
     ~race (Number of levels: 5) 
                   Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    sd(Intercept)     0.68      0.30     0.26     1.43 1.00     1602     1434
+    sd(Intercept)     0.68      0.30     0.26     1.42 1.00     1563     2322
 
     Population-Level Effects: 
               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-    Intercept     0.80      0.39    -0.03     1.51 1.00     2015     2127
-    sexMale      -0.08      0.17    -0.43     0.26 1.00     5345     2999
+    Intercept     0.89      0.40     0.04     1.70 1.00     2000     2148
+    sexMale      -0.08      0.17    -0.41     0.25 1.00     4841     2862
 
     Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
     and Tail_ESS are effective sample size measures, and Rhat is the potential
     scale reduction factor on split chains (at convergence, Rhat = 1).
 
 ``` r
-# extract point estimates 
-pp <- posterior_predict(fit1, post_strat)
-pred_df <- tibble(post_strat, pred = apply(pp, 2, mean))
+# CAR model
+# see: https://mc-stan.org/users/documentation/case-studies/icar_stan.html
+# note: can't predict to regions with no observations
+fit2 <- brm(pol_qual ~ sex +
+              (1|age) +
+              (1|race) +
+              (1|age:race) +
+              (1|geoid) +
+              car(W, gr = geoid, type = 'bym'),
+            family = bernoulli(),
+            prior = bprior2,
+            data = mrp_svy,
+            data2 = list(W = W),
+            chains = 4,
+            cores = 4,
+            iter = 2000,
+            control = list(adapt_delta = .95))
 ```
+
+    Compiling Stan program...
+    Start sampling
+
+``` r
+summary(fit2)
+```
+
+     Family: bernoulli 
+      Links: mu = logit 
+    Formula: pol_qual ~ sex + (1 | age) + (1 | race) + (1 | age:race) + (1 | geoid) + car(W, gr = geoid, type = "bym") 
+       Data: mrp_svy (Number of observations: 842) 
+      Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1;
+             total post-warmup draws = 4000
+
+    Correlation Structures:
+           Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    rhocar     0.60      0.26     0.08     0.98 1.00     1489     1903
+    sdcar      0.36      0.16     0.05     0.67 1.01      855      734
+
+    Group-Level Effects: 
+    ~age (Number of levels: 5) 
+                  Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    sd(Intercept)     0.26      0.22     0.01     0.82 1.00     1201     1465
+
+    ~age:race (Number of levels: 25) 
+                  Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    sd(Intercept)     0.23      0.17     0.01     0.63 1.00     1178     1756
+
+    ~geoid (Number of levels: 107) 
+                  Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    sd(Intercept)     0.22      0.15     0.01     0.56 1.01      577     1395
+
+    ~race (Number of levels: 5) 
+                  Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    sd(Intercept)     0.65      0.31     0.21     1.39 1.00     1500     1458
+
+    Population-Level Effects: 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+    Intercept     0.98      0.40     0.16     1.79 1.00     1612     2124
+    sexMale      -0.09      0.17    -0.43     0.25 1.00     6210     3096
+
+    Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
+    and Tail_ESS are effective sample size measures, and Rhat is the potential
+    scale reduction factor on split chains (at convergence, Rhat = 1).
 
 ## Post Stratified Estimates
 
 ``` r
 # POST STRATIFICATION
 # ------------------------- #
-post_strat_est <-
-  pred_df %>%
-  rename(gender = sex) %>%
-  mutate(across(where(is.character), tolower)) %>%
-  left_join(raleigh) %>%
-  na.omit() %>%
-  mutate(pred = pred * count) %>%
-  group_by(geoid) %>%
-  summarise(count = sum(count),
-            pred = sum(pred)) %>%
-  mutate(prop = pred / count)
+
+post_stratify <- function(model, post_strat_df, geo){
+  
+  # predictions
+  pp <- posterior_predict(model, post_strat_df)
+  pred_df <- tibble(post_strat_df, pred = apply(pp, 2, mean))
+  
+  # estimates
+  est <-
+    pred_df %>%
+    mutate(across(where(is.character), tolower)) %>%
+    left_join(geo) %>%
+    na.omit() %>%
+    mutate(pred = pred * count) %>%
+    group_by(geoid) %>%
+    summarise(count = sum(count),
+              pred = sum(pred)) %>%
+    mutate(prop = pred / count)
+  
+  return(est)
+}
+
+# get estimates for plain mrp and CAR model
+ps_fit1 <- post_stratify(fit1, post_strat, raleigh) %>%
+  mutate(model = "MRP")
 ```
 
-    Joining, by = c("age", "race", "gender", "geoid")
+    Joining, by = c("age", "race", "sex", "geoid")
 
 ``` r
-# predictions
-head(post_strat_est)
+ps_fit2 <- post_stratify(fit2, post_strat, raleigh) %>%
+  mutate(model = "MRP + CAR")
 ```
 
-    # A tibble: 6 × 4
-      geoid       count  pred  prop
-      <chr>       <dbl> <dbl> <dbl>
-    1 37183050100  5043 3761. 0.746
-    2 37183050300  3231 2549. 0.789
-    3 37183050400  1736 1354. 0.780
-    4 37183050500  3210 2296. 0.715
-    5 37183050600  3038 2004. 0.660
-    6 37183050700  2673 1761. 0.659
+    Joining, by = c("age", "race", "sex", "geoid")
 
 ``` r
+plot_df <- rbind(ps_fit1, ps_fit2)
+
 # Map of proportion
-post_strat_est %>%
+# note strong geographical differences (SW - NE)
+plot_df %>%
   left_join(raleigh_tract) %>%
   st_as_sf() %>%
   ggplot() +
-  geom_sf(aes(fill = prop)) +
+  geom_sf(aes(fill = prop), color = "grey50") +
   scale_fill_viridis_c() +
+  scale_color_viridis_c() +
   theme_minimal() +
+  facet_wrap(~ model) +
   labs(title = "Raleigh Community Survey (2018)",
        subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
        fill = "MRP Est")

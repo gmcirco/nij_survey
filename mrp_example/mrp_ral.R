@@ -2,6 +2,7 @@ library(tidyverse)
 library(brms)
 library(tidycensus)
 library(sf)
+library(spdep)
 
 # load survey data
 svy <- read_csv("Ral18_Survey.csv")
@@ -48,6 +49,10 @@ svy_coords <- svy %>%
   tibble() %>%
   select(ID, geoid)
 
+# create adjacency matrix
+nb <- poly2nb(raleigh_tract)
+W <- nb2mat(nb, style = "B")
+row.names(W) <- raleigh_tract$geoid
 
 # MODEL DATA
 # ------------------------- #
@@ -59,7 +64,7 @@ census_demos <- census %>%
   group_by(geoid, concept) %>%
   slice(-1:-2) %>%
   mutate(
-    gender = case_when(grepl("Female", label) ~ "female",
+    sex = case_when(grepl("Female", label) ~ "female",
                        grepl("Male", label) ~ "male"),
     race = case_when(
       grepl("WHITE ALONE, NOT HISPANIC OR LATINO", concept) ~ "white",
@@ -80,7 +85,7 @@ census_demos <- census %>%
 
 raleigh <-
   census_demos %>%
-  group_by(geoid, gender, race, age) %>%
+  group_by(geoid, sex, race, age) %>%
   summarise(count = sum(estimate)) %>%
   right_join(raleigh_tract) %>%
   st_as_sf()
@@ -122,9 +127,16 @@ post_strat <-
 # ------------------------- #
 
 # set tight priors for more regularization
-bprior <- c(prior(normal(0, 1), class = "Intercept"),
+bprior <- c(prior(normal(0, 2), class = "Intercept"),
+            prior(normal(0, 2), class = "b"),
             prior(normal(0, 1), class = "sd"))
 
+bprior2 <- c(prior(normal(0, 2), class = "Intercept"),
+             prior(normal(0, 2), class = "b"),
+             prior(normal(0, 1), class = "sdcar"),
+             prior(normal(0, 1), class = "sd"))
+
+# no spatial effects
 fit1 <- brm(pol_qual ~ sex +
               (1|age) +
               (1|race) +
@@ -140,36 +152,69 @@ fit1 <- brm(pol_qual ~ sex +
 
 summary(fit1)
 
- 
-pp <- posterior_predict(fit1, post_strat)
-pred_df <- tibble(post_strat, pred = apply(pp, 2, mean))
+# CAR model
+# see: https://mc-stan.org/users/documentation/case-studies/icar_stan.html
+# note: can't predict to regions with no observations
+fit2 <- brm(pol_qual ~ sex +
+              (1|age) +
+              (1|race) +
+              (1|age:race) +
+              (1|geoid) +
+              car(W, gr = geoid, type = 'bym'),
+            family = bernoulli(),
+            prior = bprior2,
+            data = mrp_svy,
+            data2 = list(W = W),
+            chains = 4,
+            cores = 4,
+            iter = 2000,
+            control = list(adapt_delta = .95))
+
+summary(fit2)
 
 # POST STRATIFICATION
 # ------------------------- #
 
-post_strat_est <-
-  pred_df %>%
-  rename(gender = sex) %>%
-  mutate(across(where(is.character), tolower)) %>%
-  left_join(raleigh) %>%
-  na.omit() %>%
-  mutate(pred = pred * count) %>%
-  group_by(geoid) %>%
-  summarise(count = sum(count),
-            pred = sum(pred)) %>%
-  mutate(prop = pred / count)
 
-# predictions
-head(post_strat_est)
+post_stratify <- function(model, post_strat_df, geo){
+  
+  # predictions
+  pp <- posterior_predict(model, post_strat_df)
+  pred_df <- tibble(post_strat_df, pred = apply(pp, 2, mean))
+  
+  # estimates
+  est <-
+    pred_df %>%
+    mutate(across(where(is.character), tolower)) %>%
+    left_join(geo) %>%
+    na.omit() %>%
+    mutate(pred = pred * count) %>%
+    group_by(geoid) %>%
+    summarise(count = sum(count),
+              pred = sum(pred)) %>%
+    mutate(prop = pred / count)
+  
+  return(est)
+}
+
+# get estimates for plain mrp and CAR model
+ps_fit1 <- post_stratify(fit1, post_strat, raleigh) %>%
+  mutate(model = "MRP")
+ps_fit2 <- post_stratify(fit2, post_strat, raleigh) %>%
+  mutate(model = "MRP + CAR")
+plot_df <- rbind(ps_fit1, ps_fit2)
 
 # Map of proportion
-post_strat_est %>%
+# note strong geographical differences (SW - NE)
+plot_df %>%
   left_join(raleigh_tract) %>%
   st_as_sf() %>%
   ggplot() +
-  geom_sf(aes(fill = prop)) +
+  geom_sf(aes(fill = prop), color = "grey50") +
   scale_fill_viridis_c() +
+  scale_color_viridis_c() +
   theme_minimal() +
+  facet_wrap(~ model) +
   labs(title = "Raleigh Community Survey (2018)",
        subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
        fill = "MRP Est")
