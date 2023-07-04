@@ -41,6 +41,10 @@ Compare simple survey to [Raleigh survey](https://data-ral.opendata.arcgis.com/d
 
 Left a message at https://raleighnc.gov/government/services/community-survey to see about the price for survey and if they will post the 2020 data.
 
+Google post-code targeting surveys are $6 per completed, https://support.google.com/surveys/answer/2447244?hl=en for 2-10 questions. (This shut down apparently!)
+
+https://www.pollfish.com/pricing/survey-calculator/ is an alternative with geo filters (can filter to zipcode or radius).
+
 # General Questions
 
 All substantive questions pertaining to the Challenge must be submitted by June 2nd at 11:59pm to Community.Perceptions@usdoj.gov and all answers will be publicly posted on the Challenge website by June 16th. Questions of a technical nature (e.g., challenges uploading submissions) may be submitted anytime to Community.Perceptions@usdoj.gov and will be responded to as soon as possible.

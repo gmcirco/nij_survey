@@ -24,3 +24,6 @@ IV. Multilevel Regression with Post Stratification (4 Pages)
 V. Summary (1 Page)
 	A. Review of approach above, discuss advantages
 	B. Discuss human subjects protections
+
+
+Raudenbush, S. W., & Sampson, R. J. (1999). Ecometrics: toward a science of assessing ecological settings, with application to the systematic social observation of neighborhoods. Sociological methodology, 29(1), 1-41.
