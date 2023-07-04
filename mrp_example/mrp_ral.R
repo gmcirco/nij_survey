@@ -1,17 +1,3 @@
----
-title: "MRP for Raleigh Community Survey 2018"
-author: "Gio Circo"
-date: "2023-06-20"
-format: gfm
----
-
-## MRP Example Code
-
-First, need to pull census data from ACS, link responses to census tract level.
-NOTE: Can likely do even block group but not sure on how many strata we can do.
-Will also have to rely somewhat on spatial weighting as well (see ICAR models).
-
-```{r, warning=FALSE, message=FALSE, results='hide'}
 library(tidyverse)
 library(brms)
 library(tidycensus)
@@ -67,13 +53,10 @@ svy_coords <- svy %>%
 nb <- poly2nb(raleigh_tract)
 W <- nb2mat(nb, style = "B")
 row.names(W) <- raleigh_tract$geoid
-```
 
-## Data Setup
+# MODEL DATA
+# ------------------------- #
 
-### Recode census data
-
-```{r, warning=FALSE, message=FALSE}
 # Select variables of interest, grouping up by relevant strata
 # gender = 2, race = 4, age = 6
 census_demos <- census %>%
@@ -107,13 +90,6 @@ raleigh <-
   right_join(raleigh_tract) %>%
   st_as_sf()
 
-```
-
-### Recode survey data
-
-```{r}
-# mrp svy
-# this looks insane, but its just because the field names are wrong
 # mrp svy
 # this looks insane, but its just because the field names are wrong
 mrp_svy <- svy %>%
@@ -141,22 +117,12 @@ mrp_svy <- svy %>%
   )) %>%
   select(age,race,sex,geoid, pol_qual) %>% 
   na.omit()
-```
 
-### Strata to post-stratify to
-
-```{r}
 # post strat table
 post_strat <-
   mrp_svy %>%
   expand(age,race,sex,geoid)
 
-head(post_strat)
-```
-
-### Run MRP models
-
-```{r}
 # MULTI-LEVEL REGRESSION
 # ------------------------- #
 
@@ -186,7 +152,7 @@ fit1 <- brm(pol_qual ~ sex +
 
 summary(fit1)
 
-# CAR model
+# CAR model, via besag york mollie
 # see: https://mc-stan.org/users/documentation/case-studies/icar_stan.html
 # note: can't predict to regions with no observations
 fit2 <- brm(pol_qual ~ sex +
@@ -205,15 +171,10 @@ fit2 <- brm(pol_qual ~ sex +
             control = list(adapt_delta = .95))
 
 summary(fit2)
-```
 
-## Post Stratified Estimates
-
-### MRP Estimates and MRP + CAR
-
-```{r}
 # POST STRATIFICATION
 # ------------------------- #
+
 
 post_stratify <- function(model, post_strat_df, geo){
   
@@ -257,28 +218,3 @@ plot_df %>%
   labs(title = "Raleigh Community Survey (2018)",
        subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
        fill = "MRP Est")
-
-```
-
-### Differences between MRP and MRP + CAR
-
-A strong NE-SW gradient is apparent here. This is due to the spatial weighting and likely accounts for some of the racial-based geographic segregation. However the differences are *very* minor - on the order of less than a percentage point.
-
-```{r}
-# differences
-plot_df %>%
-  group_by(geoid) %>%
-  mutate(diff = prop - lag(prop) ) %>%
-  na.omit()%>%
-  left_join(raleigh_tract) %>%
-  st_as_sf() %>%
-  ggplot() +
-  geom_sf(aes(fill = diff), color = "grey50") +
-  scale_fill_viridis_c() +
-  theme_minimal() +
-  facet_wrap(~ model) +
-  labs(title = "Raleigh Community Survey (2018)",
-       subtitle = "Difference in proportion",
-       fill = "MRP Est")
-
-```
