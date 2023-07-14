@@ -218,3 +218,20 @@ plot_df %>%
   labs(title = "Raleigh Community Survey (2018)",
        subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
        fill = "MRP Est")
+
+# differences
+plot_df %>%
+  group_by(geoid) %>%
+  mutate(diff = prop - lag(prop) ) %>%
+  na.omit()%>%
+  left_join(raleigh_tract) %>%
+  st_as_sf() %>%
+  ggplot() +
+  geom_sf(aes(fill = diff), color = "grey50") +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  facet_wrap(~ model) +
+  labs(title = "Raleigh Community Survey (2018)",
+       subtitle = "Proportion rating quality of police services as 'Excellent' or 'Good'",
+       fill = "MRP Est")
+
