@@ -1,33 +1,27 @@
-# nij_survey
+# Using Every Door Direct Mail Web Push Surveys and Multi-level modelling with Post Stratification to estimate Perceptions of Police at Small Geographies
+
+Team MCHawks (Giovanni Circo and Andrew Wheeler)
 
 Code and resources for **[2023 NIJ competition](https://nij.ojp.gov/funding/innovations-measuring-community-perceptions-challenge)**
 
-# Questions for open panel
+# Overview of Method
 
- - Can a single team do entries for Category 1 (survey instrument) and Category 2 (non-survey)?
- - Can a single team submit an entry for Category 1 (Probability) *and* Category 1 (Non-Probability)?
- - "Solutions that solely rely upon law enforcement contact surveys will not be considered." Does this eliminate using law enforcement data (such as cell phone numbers via incident reports) as a potential source for a phone contact?
+We suggest using [USPS Every Door Direct Mail (EDDM)](https://eddm.usps.com/eddm/select-routes.htm) to send post-card mailers to individuals on a postal route. These mailers will then have a QR code and a plain text url in which the recipient can take the survey. 
 
-# ToDo
+Then we suggest using multi-level regression and post-stratification to adjust for differential survey non-response, and generate spatial estimates of attitudes towards police.
 
-Andy
+See the MainNarrative.docx file (in the writeup folder) for a fuller description. But our final estimates are this approach will cost approximately $7.25 per completed survey, so a city can implement this approach with a budget of under $10,000 and likely have a reasonably large enough sample size to generate micro-spatial estimates.
 
- - Description of Postcard methodology
-   - final unit? dasymetric mapping to go from postal routes to other units?
- - Cost breakdown for Postcard Direct Mail
-   - Breakdown for USPS
-   - Breakdown for Printing Postcards
- - ???Comparison to other telephone firms????
- - Demo website (PHP + database backend, or serverless connect to google/AWS?)
+# Example Demonstration Push Surveys
 
-Gio
+We have provided an example of using query strings to be able to push similar surveys, but have them save the endpoint so you can determine the specific postal route a survey was delivered to.
 
- - Description of Mr P, how it helps with non-probability samples
- - Start outline for document
+ - [Survey1](https://crimede-coder.com/graphs/survey?surv=se1)
+ - [Survey2](https://crimede-coder.com/graphs/survey?surv=se2)
 
-12 pages main document, 12 pages appendix
+This links on the backend to a googlesheet to cache responses, so is effectively free to deploy on a website.
 
-# Criteria for Judging Surveys
+# Criteria for Judging Surveys in the NIJ Competition
 
  - Representative– entries accurately represent the characteristics of the community on the key dimensions of race, ethnicity, age, and gender.
  - Cost effective – so that they can be deployed frequently to better understand patterns in changes in community perceptions.
@@ -35,16 +29,6 @@ Gio
  - Frequent – capable of low-burden administration on a systematic basis.
  - Scalable – able to be successfully deployed in jurisdictions of varying sizes.
 
-# Potential Pilot
+# Example Demo MRP with Raleigh data
 
-Compare simple survey to [Raleigh survey](https://data-ral.opendata.arcgis.com/datasets/community-survey-fy18/explore) in 2018, which has markers for Census blocks. Do our own pilot of a few postal routes using direct mailing, get response rates plus compare to prior survey.
-
-Left a message at https://raleighnc.gov/government/services/community-survey to see about the price for survey and if they will post the 2020 data.
-
-Google post-code targeting surveys are $6 per completed, https://support.google.com/surveys/answer/2447244?hl=en for 2-10 questions. (This shut down apparently!)
-
-https://www.pollfish.com/pricing/survey-calculator/ is an alternative with geo filters (can filter to zipcode or radius).
-
-# General Questions
-
-All substantive questions pertaining to the Challenge must be submitted by June 2nd at 11:59pm to Community.Perceptions@usdoj.gov and all answers will be publicly posted on the Challenge website by June 16th. Questions of a technical nature (e.g., challenges uploading submissions) may be submitted anytime to Community.Perceptions@usdoj.gov and will be responded to as soon as possible.
+We have provided a demonstration of using MRP to a set of survey data in [Raleigh](https://data-ral.opendata.arcgis.com/datasets/community-survey-fy18/explore), see the `mrp_example` folder.
